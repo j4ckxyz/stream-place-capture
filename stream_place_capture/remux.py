@@ -15,6 +15,9 @@ class QualityInfo(TypedDict):
     mode: str
     video_bitrate_k: int | None
     audio_bitrate_k: int | None
+    max_width: int | None
+    max_height: int | None
+    target_fps: int | None
     estimated_mbps: float
     description: str
 
@@ -26,35 +29,47 @@ QUALITY_PRESETS: dict[str, QualityInfo] = {
         "mode": "copy",
         "video_bitrate_k": None,
         "audio_bitrate_k": None,
+        "max_width": None,
+        "max_height": None,
+        "target_fps": None,
         "estimated_mbps": 8.0,
         "description": "Best fidelity, largest files",
     },
     "high": {
         "name": "high",
-        "label": "High (H.264)",
+        "label": "High 720p (H.264)",
         "mode": "h264",
-        "video_bitrate_k": 3600,
-        "audio_bitrate_k": 128,
-        "estimated_mbps": 3.8,
-        "description": "High quality with much lower storage",
+        "video_bitrate_k": 2200,
+        "audio_bitrate_k": 112,
+        "max_width": 1280,
+        "max_height": 720,
+        "target_fps": 30,
+        "estimated_mbps": 2.3,
+        "description": "Recommended default, visibly smaller files",
     },
     "balanced": {
         "name": "balanced",
-        "label": "Balanced (H.264)",
+        "label": "Balanced 540p (H.264)",
         "mode": "h264",
-        "video_bitrate_k": 2400,
-        "audio_bitrate_k": 112,
-        "estimated_mbps": 2.5,
-        "description": "Good quality and strong compression",
+        "video_bitrate_k": 1400,
+        "audio_bitrate_k": 96,
+        "max_width": 960,
+        "max_height": 540,
+        "target_fps": 30,
+        "estimated_mbps": 1.5,
+        "description": "Good quality and strong savings",
     },
     "efficient": {
         "name": "efficient",
-        "label": "Efficient (H.264)",
+        "label": "Efficient 480p (H.264)",
         "mode": "h264",
-        "video_bitrate_k": 1500,
+        "video_bitrate_k": 900,
         "audio_bitrate_k": 96,
-        "estimated_mbps": 1.6,
-        "description": "Best storage savings",
+        "max_width": 854,
+        "max_height": 480,
+        "target_fps": 30,
+        "estimated_mbps": 1.0,
+        "description": "Smallest files, usable quality",
     },
 }
 
@@ -75,6 +90,9 @@ def quality_preset_info(name: str) -> QualityInfo:
         "mode": p["mode"],
         "video_bitrate_k": p["video_bitrate_k"],
         "audio_bitrate_k": p["audio_bitrate_k"],
+        "max_width": p["max_width"],
+        "max_height": p["max_height"],
+        "target_fps": p["target_fps"],
         "estimated_mbps": p["estimated_mbps"],
         "description": p["description"],
     }
@@ -85,12 +103,21 @@ def estimated_gb_per_hour(name: str) -> float:
 
 
 class Remuxer:
-    def __init__(self, ffmpeg_path: str, stream_name: str, segment_dir: Path, output_dir: Path, quality_preset: str) -> None:
+    def __init__(
+        self,
+        ffmpeg_path: str,
+        stream_name: str,
+        segment_dir: Path,
+        output_dir: Path,
+        quality_preset: str,
+        chunk_segments: int = 12,
+    ) -> None:
         self.ffmpeg_path = ffmpeg_path
         self.stream_name = stream_name
         self.segment_dir = segment_dir
         self.output_dir = output_dir
         self.quality_preset = quality_preset
+        self.chunk_segments = max(3, int(chunk_segments))
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.log = logging.getLogger(f"remuxer.{stream_name}")
 
@@ -100,7 +127,7 @@ class Remuxer:
     def stream_state_path(self) -> Path:
         return self.output_dir / f"{self.stream_name}.state.json"
 
-    def load_processed_state(self) -> dict[str, list[str]]:
+    def load_processed_state(self) -> dict[str, object]:
         path = self.stream_state_path()
         if not path.exists():
             return {"processed": []}
@@ -108,13 +135,25 @@ class Remuxer:
             data = json.loads(path.read_text(encoding="utf-8"))
             if isinstance(data, dict):
                 raw = data.get("processed")
+                processed: list[str] = []
                 if isinstance(raw, list):
-                    return {"processed": [str(x) for x in raw]}
+                    processed = [str(x) for x in raw]
+                chunks_raw = data.get("chunks")
+                chunks: list[str] = []
+                if isinstance(chunks_raw, list):
+                    chunks = [str(x) for x in chunks_raw]
+                next_chunk_index_raw = data.get("next_chunk_index")
+                next_chunk_index = int(next_chunk_index_raw) if isinstance(next_chunk_index_raw, int) else 1
+                return {
+                    "processed": processed,
+                    "chunks": chunks,
+                    "next_chunk_index": next_chunk_index,
+                }
         except Exception:
             pass
         return {"processed": []}
 
-    def save_processed_state(self, state: dict[str, list[str]]) -> None:
+    def save_processed_state(self, state: dict[str, object]) -> None:
         path = self.stream_state_path()
         tmp = path.with_suffix(".tmp")
         tmp.write_text(json.dumps(state, indent=2), encoding="utf-8")
@@ -122,7 +161,9 @@ class Remuxer:
 
     def prune_processed_raw_segments(self, keep_recent: int) -> int:
         state = self.load_processed_state()
-        processed = set(state.get("processed", []))
+        raw_processed = state.get("processed")
+        processed_list = raw_processed if isinstance(raw_processed, list) else []
+        processed = set(str(x) for x in processed_list)
         if not processed:
             return 0
         files = sorted(self.segment_dir.glob("*.mp4"))
@@ -153,7 +194,7 @@ class Remuxer:
             return ["-c", "copy"]
         v_k = int(info["video_bitrate_k"] or 2400)
         a_k = int(info["audio_bitrate_k"] or 112)
-        return [
+        args = [
             "-c:v",
             "libx264",
             "-preset",
@@ -177,6 +218,19 @@ class Remuxer:
             "-b:a",
             f"{a_k}k",
         ]
+
+        mw = info["max_width"]
+        mh = info["max_height"]
+        fps = info["target_fps"]
+        filters: list[str] = []
+        if mw and mh:
+            filters.append(f"scale={mw}:{mh}:force_original_aspect_ratio=decrease")
+        if fps:
+            filters.append(f"fps={fps}")
+        if filters:
+            args.extend(["-vf", ",".join(filters)])
+
+        return args
 
     def _run_ffmpeg(self, cmd: list[str]) -> bool:
         proc = subprocess.run(cmd, capture_output=True, text=True)
@@ -247,81 +301,98 @@ class Remuxer:
         cmd.extend(["-movflags", "+faststart", "-f", "mp4", "-y", str(out_tmp)])
         return self._run_ffmpeg(cmd)
 
-    def remux_progressive(self) -> Path | None:
-        segment_files = sorted(self.segment_dir.glob("*.mp4"))
-        if len(segment_files) < 2:
+    def _compose_live_from_chunks(self, chunk_paths: list[Path]) -> Path | None:
+        if not chunk_paths:
             return None
-
         output_path = self.live_output_path()
-        info = quality_preset_info(self.quality_preset)
-
-        state = self.load_processed_state()
-        processed_names = set(state.get("processed", []))
-        new_segments = [p for p in segment_files if p.name not in processed_names]
-        if output_path.exists() and not new_segments:
-            return output_path
-
         temp_path = self.output_dir / f"{self.stream_name}.live.tmp.mp4"
+        ok = self._concat_copy(chunk_paths, temp_path)
+        if not ok:
+            return None
+        return self._finalize_output_file(temp_path, output_path)
 
-        if not output_path.exists():
-            if info["mode"] == "copy":
-                ok = self._concat_copy(segment_files, temp_path)
+    def _chunk_dir(self) -> Path:
+        d = self.output_dir / "chunks"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def _process_new_segments(self, force_partial: bool) -> list[Path]:
+        info = quality_preset_info(self.quality_preset)
+        state = self.load_processed_state()
+        raw_processed = state.get("processed")
+        processed_names: set[str] = set()
+        if isinstance(raw_processed, list):
+            for item in raw_processed:
+                processed_names.add(str(item))
+        raw_chunk_names = state.get("chunks")
+        chunk_names = [str(x) for x in raw_chunk_names] if isinstance(raw_chunk_names, list) else []
+        raw_next = state.get("next_chunk_index")
+        next_index = int(raw_next) if isinstance(raw_next, int) else 1
+
+        segment_files = sorted(self.segment_dir.glob("*.mp4"))
+        pending = [p for p in segment_files if p.name not in processed_names]
+        created_chunks: list[Path] = []
+        chunk_dir = self._chunk_dir()
+
+        while pending and (force_partial or len(pending) >= self.chunk_segments):
+            if force_partial and len(pending) < self.chunk_segments:
+                batch = pending
             else:
-                ok = self._encode_transcode(segment_files, temp_path, info, f"{self.stream_name}.transcode.concat.txt")
+                batch = pending[: self.chunk_segments]
+
+            chunk_name = f"{self.stream_name}.chunk.{next_index:08d}.mp4"
+            chunk_tmp = chunk_dir / f"{self.stream_name}.chunk.{next_index:08d}.tmp.mp4"
+            chunk_out = chunk_dir / chunk_name
+
+            if info["mode"] == "copy":
+                ok = self._concat_copy(batch, chunk_tmp)
+            else:
+                ok = self._encode_transcode(batch, chunk_tmp, info, f"{self.stream_name}.chunk.{next_index:08d}.concat.txt")
             if not ok:
-                return None
-            output_path = self._finalize_output_file(temp_path, output_path)
-            self.save_processed_state({"processed": [p.name for p in segment_files]})
-            self.log.info("updated remux output %s preset=%s", output_path, info["name"])
-            return output_path
+                break
 
-        if info["mode"] == "copy":
-            ok = self._concat_copy([output_path] + new_segments, temp_path)
-            if not ok:
-                return None
-            output_path = self._finalize_output_file(temp_path, output_path)
-            self.save_processed_state({"processed": [p.name for p in segment_files]})
-            self.log.info("updated remux output %s preset=%s", output_path, info["name"])
-            return output_path
+            chunk_tmp.replace(chunk_out)
+            created_chunks.append(chunk_out)
 
-        append_tmp = self.output_dir / f"{self.stream_name}.append.tmp.mp4"
-        ok = self._encode_transcode(new_segments, append_tmp, info, f"{self.stream_name}.append.concat.txt")
-        if not ok:
-            return None
+            for seg in batch:
+                processed_names.add(seg.name)
+            chunk_names.append(chunk_name)
+            next_index += 1
 
-        ok = self._concat_copy([output_path, append_tmp], temp_path)
-        try:
-            append_tmp.unlink(missing_ok=True)
-        except Exception:
-            pass
-        if not ok:
-            return None
+            state_to_save = {
+                "processed": sorted(processed_names),
+                "chunks": chunk_names,
+                "next_chunk_index": next_index,
+            }
+            self.save_processed_state(state_to_save)
 
-        output_path = self._finalize_output_file(temp_path, output_path)
-        self.save_processed_state({"processed": [p.name for p in segment_files]})
-        self.log.info("updated remux output %s preset=%s", output_path, info["name"])
-        return output_path
+            pending = pending[len(batch) :]
+
+        return created_chunks
+
+    def remux_progressive(self) -> Path | None:
+        self._process_new_segments(force_partial=False)
+        state = self.load_processed_state()
+        raw_chunk_names = state.get("chunks")
+        chunk_names = [str(x) for x in raw_chunk_names] if isinstance(raw_chunk_names, list) else []
+        chunk_dir = self._chunk_dir()
+        chunk_paths = [chunk_dir / name for name in chunk_names if (chunk_dir / name).exists()]
+        out = self._compose_live_from_chunks(chunk_paths)
+        if out is not None:
+            self.log.info("updated remux output %s preset=%s", out, quality_preset_info(self.quality_preset)["name"])
+        return out
 
     def force_full_rebuild(self) -> Path | None:
-        segment_files = sorted(self.segment_dir.glob("*.mp4"))
-        if len(segment_files) < 2:
-            return None
-
-        output_path = self.live_output_path()
-        temp_path = self.output_dir / f"{self.stream_name}.live.tmp.mp4"
-        info = quality_preset_info(self.quality_preset)
-
-        if info["mode"] == "copy":
-            ok = self._concat_copy(segment_files, temp_path)
-        else:
-            ok = self._encode_transcode(segment_files, temp_path, info, f"{self.stream_name}.full.concat.txt")
-        if not ok:
-            return None
-
-        output_path = self._finalize_output_file(temp_path, output_path)
-        self.save_processed_state({"processed": [p.name for p in segment_files]})
-        self.log.info("force rebuilt output %s preset=%s", output_path, info["name"])
-        return output_path
+        self._process_new_segments(force_partial=True)
+        state = self.load_processed_state()
+        raw_chunk_names = state.get("chunks")
+        chunk_names = [str(x) for x in raw_chunk_names] if isinstance(raw_chunk_names, list) else []
+        chunk_dir = self._chunk_dir()
+        chunk_paths = [chunk_dir / name for name in chunk_names if (chunk_dir / name).exists()]
+        out = self._compose_live_from_chunks(chunk_paths)
+        if out is not None:
+            self.log.info("force rebuilt output %s preset=%s", out, quality_preset_info(self.quality_preset)["name"])
+        return out
 
     def build_preview_sample(self, preset_name: str, max_segments: int = 8) -> Path | None:
         segment_files = sorted(self.segment_dir.glob("*.mp4"))

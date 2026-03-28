@@ -4,13 +4,13 @@ This recorder uses the Stream.place live segment websocket API directly:
 
 - `place.stream.live.subscribeSegments` (binary MP4 segment stream)
 
-It is designed to avoid corruption by writing each segment atomically and remuxing progressively into a continuously updated output file.
+It is designed to avoid corruption by writing each segment atomically and assembling output progressively.
 
 ## Why this is safer
 
 - Each segment is saved as its own standalone `.mp4` file first.
 - Writes are atomic (`.tmp` then rename), so crashes do not damage existing segment files.
-- Progressive remux creates/updates a separate `*.live.mp4`; if remux fails, raw segments remain intact.
+- Progressive chunk assembly creates/updates `*.live.mp4`; if assemble fails, raw segments and finished chunks remain intact.
 - Always-on websocket worker per stream with keepalive and exponential reconnect.
 - Real-time heartbeat state file (`logs/state.json`) for external monitoring.
 
@@ -63,7 +63,7 @@ This launches a modernized desktop dashboard (Tkinter) showing per-stream:
 
 Storage efficiency defaults are now enabled:
 
-- `quality_preset: high` (H.264 compressed output)
+- `quality_preset: high` (H.264 720p)
 - raw segment pruning after successful finalize (keeps only a short recent tail)
 
 This keeps crash-safety from segment capture while reducing disk usage significantly.
@@ -111,6 +111,29 @@ Then run:
 dist\stream-place-capture.exe --config config/streams.json --gui
 ```
 
+## Quick start (Ubuntu)
+
+1. Install dependencies:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y python3 python3-venv ffmpeg
+```
+
+2. Setup:
+
+```bash
+./scripts/linux/setup.sh
+```
+
+3. Run headless recorder:
+
+```bash
+./scripts/linux/run.sh
+```
+
+Use `tmux` or `systemd` for long-running conference capture.
+
 ## CLI quality controls
 
 ```powershell
@@ -144,7 +167,12 @@ For conference capture, `require_1080p30=false` is recommended to avoid accident
 
 ## About the "lossless remux WebRTC hack"
 
-The Stream.place server code path for `subscribeSegments` upgrades to websocket and sends binary MP4 segments directly (already muxed segment payloads). This tool captures those bytes losslessly and remuxes by concatenation copy (`ffmpeg -c copy`) to avoid generation loss.
+The Stream.place server code path for `subscribeSegments` upgrades to websocket and sends binary MP4 segments directly. This tool captures those bytes first, then either:
+
+- keeps source quality (`lossless` preset), or
+- transcodes to storage-efficient presets (`high`, `balanced`, `efficient`).
+
+Assembly is chunk-based so outputs keep progressing without relying on one giant rewrite.
 
 ## Notes
 
