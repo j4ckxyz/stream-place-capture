@@ -203,6 +203,8 @@ class Remuxer:
             "copy",
             "-movflags",
             "+faststart",
+            "-f",
+            "mp4",
             "-y",
             str(out_tmp),
         ]
@@ -224,7 +226,7 @@ class Remuxer:
             str(list_file),
         ]
         cmd.extend(self._build_transcode_args(info))
-        cmd.extend(["-movflags", "+faststart", "-y", str(out_tmp)])
+        cmd.extend(["-movflags", "+faststart", "-f", "mp4", "-y", str(out_tmp)])
         return self._run_ffmpeg(cmd)
 
     def remux_progressive(self) -> Path | None:
