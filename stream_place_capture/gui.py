@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import subprocess
 import threading
 import time
 import tkinter as tk
@@ -342,8 +343,7 @@ class CaptureDashboard:
         right = ttk.Frame(top)
         right.pack(side="right")
         ttk.Button(right, text="Start", command=self.start_service, width=12).pack(side="left", padx=4)
-        ttk.Button(right, text="Stop", command=self.stop_service, width=10).pack(side="left", padx=4)
-        ttk.Button(right, text="Stop + Checkpoint", command=self.stop_for_reboot, width=16).pack(side="left", padx=4)
+        ttk.Button(right, text="Stop", command=self.stop_service, width=12).pack(side="left", padx=4)
         ttk.Button(right, text="Rebuild Final", command=self.rebuild_final, width=14).pack(side="left", padx=4)
         ttk.Button(right, text="Change Save Folder", command=self.change_save_folder, width=18).pack(side="left", padx=4)
 
@@ -449,7 +449,10 @@ class CaptureDashboard:
     def open_folder(self, path: Path) -> None:
         path.mkdir(parents=True, exist_ok=True)
         try:
-            os.startfile(str(path))  # type: ignore[attr-defined]
+            if os.name == "nt":
+                subprocess.run(["explorer", str(path)], check=False)
+            else:
+                raise RuntimeError("open folder supported on Windows only")
         except Exception:
             messagebox.showerror("Open folder", f"Could not open folder:\n{path}")
 
@@ -516,7 +519,7 @@ class CaptureDashboard:
 
         ok = messagebox.askyesno(
             "Confirm stop",
-            "This will stop all capture workers immediately. Continue?",
+            "This will finalize videos for each stream, stop capture, and close the app. Continue?",
             icon=messagebox.WARNING,
         )
         if not ok:
@@ -541,33 +544,11 @@ class CaptureDashboard:
                     lines.append(f"  - {p}")
         if not has_outputs:
             lines.append("No final output files were created yet (not enough segments).")
+        lines.append("")
+        lines.append("App will now close.")
         messagebox.showinfo("Stop complete", "\n".join(lines))
-
-    def stop_for_reboot(self) -> None:
-        if not self.runner.status().running:
-            messagebox.showinfo("Not running", "Capture service is not running.")
-            return
-
-        ok = messagebox.askyesno(
-            "Confirm reboot-safe stop",
-            "This will checkpoint merged outputs, archive a timestamped checkpoint file, and stop capture workers. Continue?",
-            icon=messagebox.WARNING,
-        )
-        if not ok:
-            return
-        phrase = simpledialog.askstring("Double-check", 'Type STOP to checkpoint and stop capture:')
-        if phrase != "STOP":
-            messagebox.showwarning("Cancelled", "Stop cancelled (confirmation text did not match).")
-            return
-
-        stopped = self.runner.checkpoint_and_stop(timeout_seconds=60)
-        if not stopped:
-            messagebox.showwarning("Checkpoint stop issue", "Checkpoint stop did not complete cleanly yet.")
-            return
-        messagebox.showinfo(
-            "Checkpoint complete",
-            "Capture stopped. Checkpoint files were written in each stream's final folder.\nYou can reboot and restart later.",
-        )
+        self.poller.stop()
+        self.root.destroy()
 
     def rebuild_final(self) -> None:
         from .remux import Remuxer

@@ -68,12 +68,7 @@ Stop action is guarded with a double confirmation (Yes/No + type `STOP`).
 - remuxes latest output per stream
 - writes a timestamped checkpoint archive
 - shows a dialog listing exactly where files were saved
-
-For reboots, use **Stop + Checkpoint**:
-
-- forces a remux update
-- writes a timestamped checkpoint archive in each stream final folder
-- then stops capture workers safely so you can reboot and resume later
+- closes the app after finalize completes
 
 You can change where files are saved from the GUI via **Change Save Folder** (Windows folder picker).
 The app shows current save paths for raw segments, final videos, and logs, and can open each folder.
