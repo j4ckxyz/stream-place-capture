@@ -1,0 +1,33 @@
+{
+  "endpoint": "https://stream.place",
+  "reconnect_delay_seconds": 4,
+  "max_reconnect_delay_seconds": 30,
+  "ping_interval_seconds": 15,
+  "websocket_idle_timeout_seconds": 45,
+  "enable_realtime_remux": true,
+  "remux_every_segments": 25,
+  "remux_interval_seconds": 120,
+  "ffmpeg_path": "ffmpeg",
+  "require_1080p30": false,
+  "access_jwt": null,
+  "capture_root": "captures/segments",
+  "final_root": "captures/final",
+  "log_root": "logs",
+  "streams": [
+    {
+      "name": "stream1",
+      "handle": "stream1.atmosphereconf.org",
+      "did": "did:plc:7tattzlorncahxgtdiuci7x7"
+    },
+    {
+      "name": "stream2",
+      "handle": "stream2.atmosphereconf.org",
+      "did": "did:plc:djb6ssvz5wvuuqpdihlgh3xa"
+    },
+    {
+      "name": "stream3",
+      "handle": "stream3.atmosphereconf.org",
+      "did": "did:plc:jcahd7fl7h23c24ftxuhkhiw"
+    }
+  ]
+}
