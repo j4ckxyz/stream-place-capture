@@ -5,7 +5,6 @@ import asyncio
 from pathlib import Path
 
 from .config import load_config
-from .gui import run_dashboard
 from .remux import Remuxer, estimated_gb_per_hour, list_quality_presets, quality_preset_info
 from .service import run_service
 
@@ -87,6 +86,8 @@ def main() -> None:
                 print(f"{target.name}: preview saved to {path}")
         return
     if args.gui:
+        from .gui import run_dashboard
+
         run_dashboard(cfg, config_path=args.config)
         return
     asyncio.run(run_service(cfg))
