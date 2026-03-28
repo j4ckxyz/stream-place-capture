@@ -71,10 +71,12 @@ class CaptureService:
         quality_dir = self.cfg.capture_root / target.name / "quality"
         segments_since_remux = 0
         last_remux_ts = time.monotonic()
+        last_segment_ts = time.monotonic()
 
         def on_segment(result) -> None:
-            nonlocal segments_since_remux
+            nonlocal segments_since_remux, last_segment_ts
             segments_since_remux += 1
+            last_segment_ts = time.monotonic()
             self.state.on_segment(target.name, result.epoch_ms, result.bytes_written)
 
         writer = SegmentWriter(
@@ -112,10 +114,14 @@ class CaptureService:
                 now = time.monotonic()
                 due_count = segments_since_remux >= self.cfg.remux_every_segments
                 due_time = self.cfg.remux_interval_seconds > 0 and (now - last_remux_ts) >= self.cfg.remux_interval_seconds
-                if not (due_count or due_time):
+                idle_flush = segments_since_remux > 0 and (now - last_segment_ts) >= 25
+                if not (due_count or due_time or idle_flush):
                     continue
 
-                out = await asyncio.to_thread(remuxer.remux_progressive)
+                if idle_flush:
+                    out = await asyncio.to_thread(remuxer.force_full_rebuild)
+                else:
+                    out = await asyncio.to_thread(remuxer.remux_progressive)
                 if out is None:
                     out = await asyncio.to_thread(remuxer.force_full_rebuild)
 
