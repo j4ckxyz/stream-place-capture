@@ -36,6 +36,12 @@ def _dir_size_bytes(path: Path) -> int:
     return total
 
 
+def _count_files(path: Path, pattern: str) -> int:
+    if not path.exists():
+        return 0
+    return sum(1 for _ in path.rglob(pattern))
+
+
 def _service_is_active(name: str) -> tuple[bool, str]:
     try:
         proc = subprocess.run(["systemctl", "is-active", name], capture_output=True, text=True, timeout=3)
@@ -109,6 +115,10 @@ class StatusContext:
         log_bytes = _dir_size_bytes(log_root)
         total_saved_bytes = capture_bytes + final_bytes + log_bytes
 
+        final_live_outputs = _count_files(final_root, "*.live.mp4")
+        final_checkpoint_outputs = _count_files(final_root, "*.checkpoint.mp4")
+        final_chunk_outputs = _count_files(final_root, "*.chunk.*.mp4")
+
         usage_target = capture_root if capture_root.exists() else root
         du = shutil.disk_usage(str(usage_target))
 
@@ -143,6 +153,9 @@ class StatusContext:
                 "final_bytes": final_bytes,
                 "log_bytes": log_bytes,
                 "total_saved_bytes": total_saved_bytes,
+                "final_live_outputs": final_live_outputs,
+                "final_checkpoint_outputs": final_checkpoint_outputs,
+                "final_chunk_outputs": final_chunk_outputs,
                 "filesystem_total_bytes": du.total,
                 "filesystem_used_bytes": du.used,
                 "filesystem_free_bytes": du.free,

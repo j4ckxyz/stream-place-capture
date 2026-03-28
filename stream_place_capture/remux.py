@@ -328,6 +328,8 @@ class Remuxer:
         chunk_names = [str(x) for x in raw_chunk_names] if isinstance(raw_chunk_names, list) else []
         raw_next = state.get("next_chunk_index")
         next_index = int(raw_next) if isinstance(raw_next, int) else 1
+        raw_composed = state.get("composed_chunk_count")
+        composed_chunk_count = int(raw_composed) if isinstance(raw_composed, int) else 0
 
         segment_files = sorted(self.segment_dir.glob("*.mp4"))
         pending = [p for p in segment_files if p.name not in processed_names]
@@ -363,6 +365,7 @@ class Remuxer:
                 "processed": sorted(processed_names),
                 "chunks": chunk_names,
                 "next_chunk_index": next_index,
+                "composed_chunk_count": composed_chunk_count,
             }
             self.save_processed_state(state_to_save)
 
@@ -375,10 +378,21 @@ class Remuxer:
         state = self.load_processed_state()
         raw_chunk_names = state.get("chunks")
         chunk_names = [str(x) for x in raw_chunk_names] if isinstance(raw_chunk_names, list) else []
+        if not chunk_names:
+            return None
+
+        raw_composed = state.get("composed_chunk_count")
+        composed_chunk_count = int(raw_composed) if isinstance(raw_composed, int) else 0
+        output_path = self.live_output_path()
+        if output_path.exists() and composed_chunk_count >= len(chunk_names):
+            return output_path
+
         chunk_dir = self._chunk_dir()
         chunk_paths = [chunk_dir / name for name in chunk_names if (chunk_dir / name).exists()]
         out = self._compose_live_from_chunks(chunk_paths)
         if out is not None:
+            state["composed_chunk_count"] = len(chunk_names)
+            self.save_processed_state(state)
             self.log.info("updated remux output %s preset=%s", out, quality_preset_info(self.quality_preset)["name"])
         return out
 
@@ -391,6 +405,8 @@ class Remuxer:
         chunk_paths = [chunk_dir / name for name in chunk_names if (chunk_dir / name).exists()]
         out = self._compose_live_from_chunks(chunk_paths)
         if out is not None:
+            state["composed_chunk_count"] = len(chunk_names)
+            self.save_processed_state(state)
             self.log.info("force rebuilt output %s preset=%s", out, quality_preset_info(self.quality_preset)["name"])
         return out
 
