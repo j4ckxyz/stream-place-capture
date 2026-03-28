@@ -70,6 +70,8 @@ Stop action is guarded with a double confirmation (Yes/No + type `STOP`).
 - shows a dialog listing exactly where files were saved
 - closes the app after finalize completes
 
+The window close button (`X`) now runs the same graceful stop flow.
+
 You can change where files are saved from the GUI via **Change Save Folder** (Windows folder picker).
 The app shows current save paths for raw segments, final videos, and logs, and can open each folder.
 

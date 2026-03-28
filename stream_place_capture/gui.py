@@ -512,9 +512,16 @@ class CaptureDashboard:
         if not started and not silent:
             messagebox.showinfo("Already running", "Capture service is already running.")
 
+    def _close_window(self) -> None:
+        self.poller.stop()
+        try:
+            self.root.destroy()
+        except Exception:
+            pass
+
     def stop_service(self) -> None:
         if not self.runner.status().running:
-            messagebox.showinfo("Not running", "Capture service is not running.")
+            self._close_window()
             return
 
         ok = messagebox.askyesno(
@@ -547,8 +554,7 @@ class CaptureDashboard:
         lines.append("")
         lines.append("App will now close.")
         messagebox.showinfo("Stop complete", "\n".join(lines))
-        self.poller.stop()
-        self.root.destroy()
+        self._close_window()
 
     def rebuild_final(self) -> None:
         from .remux import Remuxer
@@ -567,9 +573,7 @@ class CaptureDashboard:
         messagebox.showinfo("Remux", "Rebuild triggered in background.")
 
     def on_close(self) -> None:
-        self.poller.stop()
-        self.runner.stop(timeout_seconds=20)
-        self.root.destroy()
+        self.stop_service()
 
     def run(self) -> None:
         self.root.mainloop()
