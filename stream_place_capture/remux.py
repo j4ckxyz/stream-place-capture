@@ -185,6 +185,24 @@ class Remuxer:
             return False
         return True
 
+    def _finalize_output_file(self, temp_path: Path, output_path: Path) -> Path:
+        for _ in range(8):
+            try:
+                temp_path.replace(output_path)
+                return output_path
+            except PermissionError:
+                time.sleep(0.15)
+
+        stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime())
+        fallback = output_path.with_name(f"{self.stream_name}.live.{stamp}.mp4")
+        temp_path.replace(fallback)
+        self.log.warning(
+            "could not replace active output file %s (likely in use), wrote fallback %s",
+            output_path,
+            fallback,
+        )
+        return fallback
+
     def _concat_copy(self, inputs: list[Path], out_tmp: Path) -> bool:
         list_file = self.output_dir / f"{self.stream_name}.concat.txt"
         self._write_concat_list(inputs, list_file)
@@ -252,7 +270,7 @@ class Remuxer:
                 ok = self._encode_transcode(segment_files, temp_path, info, f"{self.stream_name}.transcode.concat.txt")
             if not ok:
                 return None
-            temp_path.replace(output_path)
+            output_path = self._finalize_output_file(temp_path, output_path)
             self.save_processed_state({"processed": [p.name for p in segment_files]})
             self.log.info("updated remux output %s preset=%s", output_path, info["name"])
             return output_path
@@ -261,7 +279,7 @@ class Remuxer:
             ok = self._concat_copy([output_path] + new_segments, temp_path)
             if not ok:
                 return None
-            temp_path.replace(output_path)
+            output_path = self._finalize_output_file(temp_path, output_path)
             self.save_processed_state({"processed": [p.name for p in segment_files]})
             self.log.info("updated remux output %s preset=%s", output_path, info["name"])
             return output_path
@@ -279,7 +297,7 @@ class Remuxer:
         if not ok:
             return None
 
-        temp_path.replace(output_path)
+        output_path = self._finalize_output_file(temp_path, output_path)
         self.save_processed_state({"processed": [p.name for p in segment_files]})
         self.log.info("updated remux output %s preset=%s", output_path, info["name"])
         return output_path
@@ -300,7 +318,7 @@ class Remuxer:
         if not ok:
             return None
 
-        temp_path.replace(output_path)
+        output_path = self._finalize_output_file(temp_path, output_path)
         self.save_processed_state({"processed": [p.name for p in segment_files]})
         self.log.info("force rebuilt output %s preset=%s", output_path, info["name"])
         return output_path
