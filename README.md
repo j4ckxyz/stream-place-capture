@@ -134,6 +134,22 @@ sudo apt-get install -y python3 python3-venv ffmpeg
 
 Use `tmux` or `systemd` for long-running conference capture.
 
+### JSON status endpoint (Ubuntu)
+
+Expose current recorder stats on port `11456`:
+
+```bash
+./scripts/linux/install-status-service.sh
+curl http://127.0.0.1:11456/status
+```
+
+Returns JSON with:
+
+- service state
+- per-stream status/segments/last-segment age
+- recording duration
+- disk usage and free space
+
 ## CLI quality controls
 
 ```powershell
