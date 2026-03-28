@@ -69,8 +69,12 @@ class CaptureService:
     async def _run_worker(self, target: StreamTarget, stop_event: asyncio.Event, session: aiohttp.ClientSession) -> None:
         stream_segment_dir = self.cfg.capture_root / target.name / "segments"
         quality_dir = self.cfg.capture_root / target.name / "quality"
+        segments_since_remux = 0
+        last_remux_ts = time.monotonic()
 
         def on_segment(result) -> None:
+            nonlocal segments_since_remux
+            segments_since_remux += 1
             self.state.on_segment(target.name, result.epoch_ms, result.bytes_written)
 
         writer = SegmentWriter(
@@ -97,15 +101,42 @@ class CaptureService:
             idle_timeout_seconds=self.cfg.websocket_idle_timeout_seconds,
         )
 
-        total_segments = 0
-        last_remux_ts = 0.0
         reconnect_delay = self.cfg.reconnect_delay_seconds
+
+        async def periodic_remux() -> None:
+            nonlocal segments_since_remux, last_remux_ts
+            if not self.cfg.enable_realtime_remux:
+                return
+            while not stop_event.is_set() and not self.stop_event.is_set():
+                await asyncio.sleep(3)
+                now = time.monotonic()
+                due_count = segments_since_remux >= self.cfg.remux_every_segments
+                due_time = self.cfg.remux_interval_seconds > 0 and (now - last_remux_ts) >= self.cfg.remux_interval_seconds
+                if not (due_count or due_time):
+                    continue
+
+                out = await asyncio.to_thread(remuxer.remux_progressive)
+                if out is None:
+                    out = await asyncio.to_thread(remuxer.force_full_rebuild)
+
+                if out is not None:
+                    if self.cfg.prune_processed_segments:
+                        removed = await asyncio.to_thread(
+                            remuxer.prune_processed_raw_segments,
+                            self.cfg.keep_recent_raw_segments,
+                        )
+                        if removed > 0:
+                            self.log.info("pruned %d processed raw segments for %s", removed, target.name)
+                    segments_since_remux = 0
+                    last_remux_ts = time.monotonic()
+
+        remux_task = asyncio.create_task(periodic_remux(), name=f"remux-{target.name}")
+
         try:
             while not stop_event.is_set() and not self.stop_event.is_set():
                 try:
                     self.state.on_connected(target.name)
-                    count = await subscriber.run_once(session)
-                    total_segments += count
+                    await subscriber.run_once(session)
                     reconnect_delay = self.cfg.reconnect_delay_seconds
                 except asyncio.CancelledError:
                     raise
@@ -113,31 +144,20 @@ class CaptureService:
                     self.log.warning("worker %s disconnected: %s", target.name, exc)
                     self.state.on_disconnect(target.name, str(exc))
 
-                if self.cfg.enable_realtime_remux:
-                    now = time.monotonic()
-                    should_remux = total_segments >= self.cfg.remux_every_segments
-                    if not should_remux and self.cfg.remux_interval_seconds > 0:
-                        should_remux = (now - last_remux_ts) >= self.cfg.remux_interval_seconds
-                    if should_remux:
-                        out = remuxer.remux_progressive()
-                        if out is None:
-                            out = remuxer.force_full_rebuild()
-                        if self.cfg.prune_processed_segments and out is not None:
-                            removed = remuxer.prune_processed_raw_segments(self.cfg.keep_recent_raw_segments)
-                            if removed > 0:
-                                self.log.info("pruned %d processed raw segments for %s", removed, target.name)
-                        total_segments = 0
-                        last_remux_ts = now
-
                 await asyncio.sleep(reconnect_delay)
                 reconnect_delay = min(max(self.cfg.reconnect_delay_seconds, reconnect_delay * 2), self.cfg.max_reconnect_delay_seconds)
         finally:
+            remux_task.cancel()
+            try:
+                await remux_task
+            except asyncio.CancelledError:
+                pass
             if self.cfg.enable_realtime_remux:
-                out = remuxer.remux_progressive()
+                out = await asyncio.to_thread(remuxer.remux_progressive)
                 if out is None:
-                    out = remuxer.force_full_rebuild()
+                    out = await asyncio.to_thread(remuxer.force_full_rebuild)
                 if self.cfg.prune_processed_segments and out is not None:
-                    remuxer.prune_processed_raw_segments(self.cfg.keep_recent_raw_segments)
+                    await asyncio.to_thread(remuxer.prune_processed_raw_segments, self.cfg.keep_recent_raw_segments)
             self.state.on_stopped(target.name)
             self.remuxers_by_stream.pop(target.name, None)
 
