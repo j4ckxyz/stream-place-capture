@@ -241,7 +241,7 @@ class Remuxer:
         if output_path.exists() and not new_segments:
             return output_path
 
-        temp_path = self.output_dir / f"{self.stream_name}.live.mp4.tmp"
+        temp_path = self.output_dir / f"{self.stream_name}.live.tmp.mp4"
 
         if not output_path.exists():
             if info["mode"] == "copy":
@@ -288,7 +288,7 @@ class Remuxer:
             return None
 
         output_path = self.live_output_path()
-        temp_path = self.output_dir / f"{self.stream_name}.live.mp4.tmp"
+        temp_path = self.output_dir / f"{self.stream_name}.live.tmp.mp4"
         info = quality_preset_info(self.quality_preset)
 
         if info["mode"] == "copy":
