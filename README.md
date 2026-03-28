@@ -63,6 +63,12 @@ This launches a modernized desktop dashboard (Tkinter) showing per-stream:
 
 Stop action is guarded with a double confirmation (Yes/No + type `STOP`).
 
+For reboots, use **Stop + Checkpoint**:
+
+- forces a remux update
+- writes a timestamped checkpoint archive in each stream final folder
+- then stops capture workers safely so you can reboot and resume later
+
 You can change where files are saved from the GUI via **Change Save Folder** (Windows folder picker).
 The app shows current save paths for raw segments, final videos, and logs, and can open each folder.
 

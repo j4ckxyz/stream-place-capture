@@ -342,7 +342,8 @@ class CaptureDashboard:
         right = ttk.Frame(top)
         right.pack(side="right")
         ttk.Button(right, text="Start", command=self.start_service, width=12).pack(side="left", padx=4)
-        ttk.Button(right, text="Stop", command=self.stop_service, width=12).pack(side="left", padx=4)
+        ttk.Button(right, text="Stop", command=self.stop_service, width=10).pack(side="left", padx=4)
+        ttk.Button(right, text="Stop + Checkpoint", command=self.stop_for_reboot, width=16).pack(side="left", padx=4)
         ttk.Button(right, text="Rebuild Final", command=self.rebuild_final, width=14).pack(side="left", padx=4)
         ttk.Button(right, text="Change Save Folder", command=self.change_save_folder, width=18).pack(side="left", padx=4)
 
@@ -528,6 +529,32 @@ class CaptureDashboard:
         stopped = self.runner.stop(timeout_seconds=20)
         if not stopped:
             messagebox.showwarning("Still stopping", "Service did not stop cleanly yet.")
+
+    def stop_for_reboot(self) -> None:
+        if not self.runner.status().running:
+            messagebox.showinfo("Not running", "Capture service is not running.")
+            return
+
+        ok = messagebox.askyesno(
+            "Confirm reboot-safe stop",
+            "This will checkpoint merged outputs, archive a timestamped checkpoint file, and stop capture workers. Continue?",
+            icon=messagebox.WARNING,
+        )
+        if not ok:
+            return
+        phrase = simpledialog.askstring("Double-check", 'Type STOP to checkpoint and stop capture:')
+        if phrase != "STOP":
+            messagebox.showwarning("Cancelled", "Stop cancelled (confirmation text did not match).")
+            return
+
+        stopped = self.runner.checkpoint_and_stop(timeout_seconds=60)
+        if not stopped:
+            messagebox.showwarning("Checkpoint stop issue", "Checkpoint stop did not complete cleanly yet.")
+            return
+        messagebox.showinfo(
+            "Checkpoint complete",
+            "Capture stopped. Checkpoint files were written in each stream's final folder.\nYou can reboot and restart later.",
+        )
 
     def rebuild_final(self) -> None:
         from .remux import Remuxer

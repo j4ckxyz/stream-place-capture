@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import logging
+import shutil
 import subprocess
+import time
 from pathlib import Path
 
 
@@ -53,3 +55,13 @@ class Remuxer:
         temp_path.replace(output_path)
         self.log.info("updated remux output %s", output_path)
         return output_path
+
+    def archive_live_output(self) -> Path | None:
+        source = self.output_dir / f"{self.stream_name}.live.mp4"
+        if not source.exists():
+            return None
+        stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime())
+        archive = self.output_dir / f"{self.stream_name}.{stamp}.checkpoint.mp4"
+        shutil.copy2(source, archive)
+        self.log.info("wrote checkpoint archive %s", archive)
+        return archive

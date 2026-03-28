@@ -47,6 +47,7 @@ class CaptureService:
         self.workers: dict[str, RunningWorker] = {}
         self.resolved_targets: list[StreamTarget] = []
         self.state = StateStore(cfg.log_root / "state.json")
+        self.remuxers_by_stream: dict[str, Remuxer] = {}
 
     async def _resolve_targets(self, session: aiohttp.ClientSession) -> None:
         self.resolved_targets = []
@@ -85,6 +86,7 @@ class CaptureService:
             segment_dir=stream_segment_dir,
             output_dir=self.cfg.final_root / target.name,
         )
+        self.remuxers_by_stream[target.name] = remuxer
         subscriber = SegmentSubscriber(
             endpoint=self.cfg.endpoint,
             streamer_did=target.did,
@@ -126,6 +128,7 @@ class CaptureService:
             if self.cfg.enable_realtime_remux:
                 remuxer.remux_progressive()
             self.state.on_stopped(target.name)
+            self.remuxers_by_stream.pop(target.name, None)
 
     async def _start_all_workers(self, session: aiohttp.ClientSession) -> None:
         for target in self.resolved_targets:
@@ -186,6 +189,16 @@ class CaptureService:
                 running.task.cancel()
             await asyncio.gather(*(w.task for w in self.workers.values()), return_exceptions=True)
             self.workers.clear()
+
+    async def checkpoint_and_stop(self) -> None:
+        self.log.info("checkpoint stop requested")
+        for remuxer in list(self.remuxers_by_stream.values()):
+            try:
+                remuxer.remux_progressive()
+                remuxer.archive_live_output()
+            except Exception as exc:
+                self.log.warning("checkpoint remux/archive failed: %s", exc)
+        self.request_stop()
 
     def request_stop(self) -> None:
         self.stop_event.set()

@@ -22,6 +22,7 @@ class ServiceRunner:
         self._lock = threading.Lock()
         self._started_logging = False
         self._last_error: str | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
 
     def start(self) -> bool:
         with self._lock:
@@ -42,14 +43,17 @@ class ServiceRunner:
             self._last_error = str(exc)
 
     async def _run_async(self) -> None:
+        loop = asyncio.get_running_loop()
         service = CaptureService(self.cfg)
         with self._lock:
             self._service = service
+            self._loop = loop
         try:
             await service.run()
         finally:
             with self._lock:
                 self._service = None
+                self._loop = None
 
     def stop(self, timeout_seconds: float = 15.0) -> bool:
         with self._lock:
@@ -58,6 +62,29 @@ class ServiceRunner:
 
         if svc:
             svc.request_stop()
+        if th:
+            th.join(timeout=timeout_seconds)
+            return not th.is_alive()
+        return True
+
+    def checkpoint_and_stop(self, timeout_seconds: float = 45.0) -> bool:
+        with self._lock:
+            svc = self._service
+            th = self._thread
+            loop = self._loop
+
+        if svc is None or loop is None:
+            return True
+
+        async def _checkpoint() -> None:
+            await svc.checkpoint_and_stop()
+
+        try:
+            fut = asyncio.run_coroutine_threadsafe(_checkpoint(), loop)
+            fut.result(timeout=timeout_seconds)
+        except Exception:
+            return False
+
         if th:
             th.join(timeout=timeout_seconds)
             return not th.is_alive()
