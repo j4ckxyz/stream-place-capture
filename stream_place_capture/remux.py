@@ -282,6 +282,27 @@ class Remuxer:
         self.log.info("updated remux output %s preset=%s", output_path, info["name"])
         return output_path
 
+    def force_full_rebuild(self) -> Path | None:
+        segment_files = sorted(self.segment_dir.glob("*.mp4"))
+        if len(segment_files) < 2:
+            return None
+
+        output_path = self.live_output_path()
+        temp_path = self.output_dir / f"{self.stream_name}.live.mp4.tmp"
+        info = quality_preset_info(self.quality_preset)
+
+        if info["mode"] == "copy":
+            ok = self._concat_copy(segment_files, temp_path)
+        else:
+            ok = self._encode_transcode(segment_files, temp_path, info, f"{self.stream_name}.full.concat.txt")
+        if not ok:
+            return None
+
+        temp_path.replace(output_path)
+        self.save_processed_state({"processed": [p.name for p in segment_files]})
+        self.log.info("force rebuilt output %s preset=%s", output_path, info["name"])
+        return output_path
+
     def build_preview_sample(self, preset_name: str, max_segments: int = 8) -> Path | None:
         segment_files = sorted(self.segment_dir.glob("*.mp4"))
         if not segment_files:

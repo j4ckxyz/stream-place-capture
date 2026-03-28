@@ -119,8 +119,10 @@ class CaptureService:
                     if not should_remux and self.cfg.remux_interval_seconds > 0:
                         should_remux = (now - last_remux_ts) >= self.cfg.remux_interval_seconds
                     if should_remux:
-                        remuxer.remux_progressive()
-                        if self.cfg.prune_processed_segments:
+                        out = remuxer.remux_progressive()
+                        if out is None:
+                            out = remuxer.force_full_rebuild()
+                        if self.cfg.prune_processed_segments and out is not None:
                             removed = remuxer.prune_processed_raw_segments(self.cfg.keep_recent_raw_segments)
                             if removed > 0:
                                 self.log.info("pruned %d processed raw segments for %s", removed, target.name)
@@ -131,8 +133,10 @@ class CaptureService:
                 reconnect_delay = min(max(self.cfg.reconnect_delay_seconds, reconnect_delay * 2), self.cfg.max_reconnect_delay_seconds)
         finally:
             if self.cfg.enable_realtime_remux:
-                remuxer.remux_progressive()
-                if self.cfg.prune_processed_segments:
+                out = remuxer.remux_progressive()
+                if out is None:
+                    out = remuxer.force_full_rebuild()
+                if self.cfg.prune_processed_segments and out is not None:
                     remuxer.prune_processed_raw_segments(self.cfg.keep_recent_raw_segments)
             self.state.on_stopped(target.name)
             self.remuxers_by_stream.pop(target.name, None)
@@ -201,7 +205,9 @@ class CaptureService:
         self.log.info("checkpoint stop requested")
         for remuxer in list(self.remuxers_by_stream.values()):
             try:
-                remuxer.remux_progressive()
+                out = remuxer.remux_progressive()
+                if out is None:
+                    out = remuxer.force_full_rebuild()
                 remuxer.archive_live_output()
             except Exception as exc:
                 self.log.warning("checkpoint remux/archive failed: %s", exc)
@@ -214,6 +220,8 @@ class CaptureService:
             stream_outputs: list[Path] = []
             try:
                 final_path = remuxer.remux_progressive()
+                if final_path is None:
+                    final_path = remuxer.force_full_rebuild()
                 if final_path is not None:
                     stream_outputs.append(final_path)
                 checkpoint = remuxer.archive_live_output()

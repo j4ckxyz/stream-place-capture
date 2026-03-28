@@ -664,7 +664,12 @@ class CaptureDashboard:
                 for p in files:
                     lines.append(f"  - {p}")
         if not has_outputs:
-            lines.append("No final output files were created yet (not enough segments).")
+            lines.append("No final output files were created yet.")
+            lines.append(f"Raw segments are in: {self.cfg.capture_root}")
+            lines.append("Use Rebuild Final before closing if you need an assembled clip now.")
+            lines.append("")
+            messagebox.showwarning("Stop complete with warning", "\n".join(lines))
+            return
         lines.append("")
         lines.append("App will now close.")
         messagebox.showinfo("Stop complete", "\n".join(lines))
