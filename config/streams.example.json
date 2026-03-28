@@ -1,5 +1,8 @@
 {
   "endpoint": "https://stream.place",
+  "quality_preset": "high",
+  "prune_processed_segments": true,
+  "keep_recent_raw_segments": 4,
   "reconnect_delay_seconds": 4,
   "max_reconnect_delay_seconds": 30,
   "ping_interval_seconds": 15,

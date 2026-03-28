@@ -61,6 +61,13 @@ This launches a modernized desktop dashboard (Tkinter) showing per-stream:
 - last segment freshness and total captured size
 - thumbnail preview (live card image)
 
+Storage efficiency defaults are now enabled:
+
+- `quality_preset: high` (H.264 compressed output)
+- raw segment pruning after successful finalize (keeps only a short recent tail)
+
+This keeps crash-safety from segment capture while reducing disk usage significantly.
+
 Stop action is guarded with a double confirmation (Yes/No + type `STOP`).
 
 `Stop` now performs a graceful finalize:
@@ -74,6 +81,10 @@ The window close button (`X`) now runs the same graceful stop flow.
 
 You can change where files are saved from the GUI via **Change Save Folder** (Windows folder picker).
 The app shows current save paths for raw segments, final videos, and logs, and can open each folder.
+
+Quality can be changed in GUI (dropdown) or CLI.
+- GUI shows estimated GB/hour per stream for each preset.
+- **Build Preview** makes a short test clip using recent segments so you can inspect quality before committing.
 
 6. If needed, rebuild merged files from already-saved segments:
 
@@ -98,6 +109,14 @@ Then run:
 
 ```powershell
 dist\stream-place-capture.exe --config config/streams.json --gui
+```
+
+## CLI quality controls
+
+```powershell
+python -m stream_place_capture --list-quality
+python -m stream_place_capture --quality high --config config/streams.json
+python -m stream_place_capture --quality balanced --build-preview --config config/streams.json
 ```
 
 ## Output layout

@@ -17,6 +17,9 @@ class StreamTarget:
 @dataclass(frozen=True)
 class CaptureConfig:
     endpoint: str
+    quality_preset: str
+    prune_processed_segments: bool
+    keep_recent_raw_segments: int
     reconnect_delay_seconds: int
     max_reconnect_delay_seconds: int
     ping_interval_seconds: int
@@ -46,6 +49,9 @@ def load_config(config_path: Path) -> CaptureConfig:
     raw = json.loads(config_path.read_text(encoding="utf-8"))
 
     endpoint = str(raw.get("endpoint", "https://stream.place")).rstrip("/")
+    quality_preset = str(raw.get("quality_preset", "high")).strip().lower() or "high"
+    prune_processed_segments = bool(raw.get("prune_processed_segments", True))
+    keep_recent_raw_segments = int(raw.get("keep_recent_raw_segments", 4))
     reconnect_delay_seconds = int(raw.get("reconnect_delay_seconds", 4))
     max_reconnect_delay_seconds = int(raw.get("max_reconnect_delay_seconds", 30))
     ping_interval_seconds = int(raw.get("ping_interval_seconds", 15))
@@ -70,6 +76,9 @@ def load_config(config_path: Path) -> CaptureConfig:
 
     return CaptureConfig(
         endpoint=endpoint,
+        quality_preset=quality_preset,
+        prune_processed_segments=prune_processed_segments,
+        keep_recent_raw_segments=keep_recent_raw_segments,
         reconnect_delay_seconds=reconnect_delay_seconds,
         max_reconnect_delay_seconds=max_reconnect_delay_seconds,
         ping_interval_seconds=ping_interval_seconds,
@@ -90,6 +99,9 @@ def load_config(config_path: Path) -> CaptureConfig:
 def config_to_dict(cfg: CaptureConfig) -> dict[str, Any]:
     return {
         "endpoint": cfg.endpoint,
+        "quality_preset": cfg.quality_preset,
+        "prune_processed_segments": cfg.prune_processed_segments,
+        "keep_recent_raw_segments": cfg.keep_recent_raw_segments,
         "reconnect_delay_seconds": cfg.reconnect_delay_seconds,
         "max_reconnect_delay_seconds": cfg.max_reconnect_delay_seconds,
         "ping_interval_seconds": cfg.ping_interval_seconds,

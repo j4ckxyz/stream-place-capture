@@ -85,6 +85,7 @@ class CaptureService:
             stream_name=target.name,
             segment_dir=stream_segment_dir,
             output_dir=self.cfg.final_root / target.name,
+            quality_preset=self.cfg.quality_preset,
         )
         self.remuxers_by_stream[target.name] = remuxer
         subscriber = SegmentSubscriber(
@@ -119,6 +120,10 @@ class CaptureService:
                         should_remux = (now - last_remux_ts) >= self.cfg.remux_interval_seconds
                     if should_remux:
                         remuxer.remux_progressive()
+                        if self.cfg.prune_processed_segments:
+                            removed = remuxer.prune_processed_raw_segments(self.cfg.keep_recent_raw_segments)
+                            if removed > 0:
+                                self.log.info("pruned %d processed raw segments for %s", removed, target.name)
                         total_segments = 0
                         last_remux_ts = now
 
@@ -127,6 +132,8 @@ class CaptureService:
         finally:
             if self.cfg.enable_realtime_remux:
                 remuxer.remux_progressive()
+                if self.cfg.prune_processed_segments:
+                    remuxer.prune_processed_raw_segments(self.cfg.keep_recent_raw_segments)
             self.state.on_stopped(target.name)
             self.remuxers_by_stream.pop(target.name, None)
 

@@ -17,6 +17,7 @@ from typing import Any
 
 from .config import CaptureConfig, StreamTarget
 from .config import save_config
+from .remux import Remuxer, estimated_gb_per_hour, list_quality_presets, quality_preset_info
 from .runtime import ServiceRunner
 
 try:
@@ -73,6 +74,15 @@ def _fmt_bytes(n: int) -> str:
         value /= 1024
         i += 1
     return f"{value:.1f}{units[i]}"
+
+
+def _fmt_duration_ms(ms: int) -> str:
+    ms = max(0, ms)
+    sec_total, rem_ms = divmod(ms, 1000)
+    days, rem = divmod(sec_total, 86400)
+    hours, rem = divmod(rem, 3600)
+    mins, secs = divmod(rem, 60)
+    return f"{days}d {hours}h {mins}m {secs}s {rem_ms}ms"
 
 
 class LiveStatusPoller:
@@ -309,9 +319,18 @@ class CaptureDashboard:
         self.capture_root_var = tk.StringVar()
         self.final_root_var = tk.StringVar()
         self.log_root_var = tk.StringVar()
+        self.quality_var = tk.StringVar()
+        self.quality_hint_var = tk.StringVar()
+        self.runtime_var = tk.StringVar(value="Runtime: 0d 0h 0m 0s 0ms")
+        self.total_size_var = tk.StringVar(value="Total saved: 0B")
+        self.started_epoch_ms = int(time.time() * 1000)
+        self._closing = False
+        self._last_size_refresh_ms = 0
+        self._cached_saved_size_bytes = 0
 
         self._build_ui()
         self._refresh_path_labels()
+        self._refresh_quality_labels()
         self.poller.start()
         self.start_service(silent=True)
         self._tick()
@@ -347,8 +366,24 @@ class CaptureDashboard:
         ttk.Button(right, text="Rebuild Final", command=self.rebuild_final, width=14).pack(side="left", padx=4)
         ttk.Button(right, text="Change Save Folder", command=self.change_save_folder, width=18).pack(side="left", padx=4)
 
+        quality_wrap = ttk.Frame(self.root)
+        quality_wrap.pack(fill="x", padx=16, pady=(2, 4))
+        ttk.Label(quality_wrap, text="Quality:", style="Subhead.TLabel").pack(side="left")
+        preset_values = [p["name"] for p in list_quality_presets()]
+        self.quality_combo = ttk.Combobox(quality_wrap, state="readonly", values=preset_values, textvariable=self.quality_var, width=14)
+        self.quality_combo.pack(side="left", padx=(6, 6))
+        self.quality_combo.bind("<<ComboboxSelected>>", self.change_quality)
+        ttk.Button(quality_wrap, text="Build Preview", command=self.build_quality_preview, width=12).pack(side="left", padx=4)
+        ttk.Label(quality_wrap, textvariable=self.quality_hint_var, style="Subhead.TLabel").pack(side="left", padx=8)
+
         self.service_status_var = tk.StringVar(value="service: stopped")
         ttk.Label(self.root, textvariable=self.service_status_var, style="Subhead.TLabel").pack(anchor="w", padx=18)
+
+        totals_wrap = ttk.Frame(self.root)
+        totals_wrap.pack(fill="x", padx=16, pady=(0, 2))
+        ttk.Label(totals_wrap, textvariable=self.runtime_var, style="Subhead.TLabel").pack(side="left")
+        ttk.Label(totals_wrap, text="  |  ", style="Subhead.TLabel").pack(side="left")
+        ttk.Label(totals_wrap, textvariable=self.total_size_var, style="Subhead.TLabel").pack(side="left")
 
         paths_wrap = ttk.Frame(self.root)
         paths_wrap.pack(fill="x", padx=16, pady=(6, 2))
@@ -439,12 +474,84 @@ class CaptureDashboard:
             card.update(cap, live)
             card.set_preview(self._preview_photo(name, live))
 
+        self._refresh_runtime_totals(capture_state)
+
         self.root.after(1000, self._tick)
 
     def _refresh_path_labels(self) -> None:
         self.capture_root_var.set(f"Raw segments: {self.cfg.capture_root}")
         self.final_root_var.set(f"Final videos: {self.cfg.final_root}")
         self.log_root_var.set(f"Logs/state: {self.cfg.log_root}")
+
+    def _refresh_quality_labels(self) -> None:
+        info = quality_preset_info(self.cfg.quality_preset)
+        self.quality_var.set(info["name"])
+        est = estimated_gb_per_hour(info["name"])
+        self.quality_hint_var.set(f"{info['label']} | est {est:.2f} GB/hr/stream")
+
+    def _refresh_runtime_totals(self, capture_state: dict[str, UiCaptureState]) -> None:
+        now_ms = int(time.time() * 1000)
+        self.runtime_var.set(f"Runtime: {_fmt_duration_ms(now_ms - self.started_epoch_ms)}")
+        if now_ms - self._last_size_refresh_ms >= 30000:
+            self._cached_saved_size_bytes = self._compute_saved_size_bytes()
+            self._last_size_refresh_ms = now_ms
+        self.total_size_var.set(f"Total saved on disk: {_fmt_bytes(self._cached_saved_size_bytes)}")
+
+    def _compute_saved_size_bytes(self) -> int:
+        roots = {
+            self.cfg.capture_root.resolve(),
+            self.cfg.final_root.resolve(),
+            self.cfg.log_root.resolve(),
+        }
+        total = 0
+        for root in roots:
+            if not root.exists():
+                continue
+            for p in root.rglob("*"):
+                if not p.is_file():
+                    continue
+                try:
+                    total += p.stat().st_size
+                except Exception:
+                    continue
+        return total
+
+    def change_quality(self, _event=None) -> None:
+        selected = self.quality_var.get().strip().lower()
+        if not selected:
+            return
+        if selected == self.cfg.quality_preset:
+            self._refresh_quality_labels()
+            return
+        new_cfg = replace(self.cfg, quality_preset=selected)
+        if self.runner.status().running:
+            ok = messagebox.askyesno(
+                "Apply quality preset",
+                "Recorder will briefly restart to apply new quality preset. Continue?",
+                icon=messagebox.WARNING,
+            )
+            if not ok:
+                self._refresh_quality_labels()
+                return
+        self._apply_new_config(new_cfg, restart_if_running=True)
+        self._refresh_quality_labels()
+
+    def build_quality_preview(self) -> None:
+        target = next(iter(self.cfg.stream_targets), None)
+        if target is None:
+            return
+        remuxer = Remuxer(
+            ffmpeg_path=self.cfg.ffmpeg_path,
+            stream_name=target.name,
+            segment_dir=self.cfg.capture_root / target.name / "segments",
+            output_dir=self.cfg.final_root / target.name,
+            quality_preset=self.cfg.quality_preset,
+        )
+        path = remuxer.build_preview_sample(self.cfg.quality_preset)
+        if path is None:
+            messagebox.showinfo("Preview", "Not enough recent segments to build preview yet.")
+            return
+        messagebox.showinfo("Preview built", f"Preview clip saved to:\n{path}")
 
     def open_folder(self, path: Path) -> None:
         path.mkdir(parents=True, exist_ok=True)
@@ -468,6 +575,8 @@ class CaptureDashboard:
         self.state_file = self.cfg.log_root / "state.json"
         self.runner = ServiceRunner(self.cfg)
         self._refresh_path_labels()
+        self._refresh_quality_labels()
+        self._last_size_refresh_ms = 0
 
         if self.config_path:
             try:
@@ -502,6 +611,8 @@ class CaptureDashboard:
                 return
 
         self._apply_new_config(new_cfg, restart_if_running=True)
+        self._cached_saved_size_bytes = self._compute_saved_size_bytes()
+        self.total_size_var.set(f"Total saved on disk: {_fmt_bytes(self._cached_saved_size_bytes)}")
         messagebox.showinfo(
             "Save location updated",
             f"New storage root:\n{base}\n\nRaw: {new_cfg.capture_root}\nFinal: {new_cfg.final_root}\nLogs: {new_cfg.log_root}",
@@ -513,6 +624,7 @@ class CaptureDashboard:
             messagebox.showinfo("Already running", "Capture service is already running.")
 
     def _close_window(self) -> None:
+        self._closing = True
         self.poller.stop()
         try:
             self.root.destroy()
@@ -520,6 +632,8 @@ class CaptureDashboard:
             pass
 
     def stop_service(self) -> None:
+        if self._closing:
+            return
         if not self.runner.status().running:
             self._close_window()
             return
@@ -566,6 +680,7 @@ class CaptureDashboard:
                     stream_name=t.name,
                     segment_dir=self.cfg.capture_root / t.name / "segments",
                     output_dir=self.cfg.final_root / t.name,
+                    quality_preset=self.cfg.quality_preset,
                 )
                 remuxer.remux_progressive()
 
@@ -573,6 +688,8 @@ class CaptureDashboard:
         messagebox.showinfo("Remux", "Rebuild triggered in background.")
 
     def on_close(self) -> None:
+        if self._closing:
+            return
         self.stop_service()
 
     def run(self) -> None:
