@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import threading
 import time
 from dataclasses import dataclass
@@ -27,6 +28,7 @@ class StateStore:
         self.state_file.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
         self._streams: dict[str, StreamState] = {}
+        self._log = logging.getLogger("state-store")
 
     def init_stream(self, stream_name: str, handle: str, did: str) -> None:
         now_ms = int(time.time() * 1000)
@@ -96,5 +98,22 @@ class StateStore:
             ],
         }
         tmp = self.state_file.with_suffix(".tmp")
-        tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-        tmp.replace(self.state_file)
+        body = json.dumps(payload, indent=2)
+
+        # Best-effort persistence only; capture must never fail due to state I/O.
+        for _ in range(4):
+            try:
+                tmp.write_text(body, encoding="utf-8")
+                tmp.replace(self.state_file)
+                return
+            except PermissionError:
+                time.sleep(0.05)
+            except Exception as exc:
+                self._log.warning("state write retry due to error: %s", exc)
+                time.sleep(0.05)
+
+        try:
+            # Fallback non-atomic write if file-replace is locked by another process.
+            self.state_file.write_text(body, encoding="utf-8")
+        except Exception as exc:
+            self._log.warning("state write skipped due to lock/error: %s", exc)
