@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import threading
 from dataclasses import dataclass
+from pathlib import Path
 
 from .config import CaptureConfig
 from .service import CaptureService, setup_logging
@@ -66,6 +67,29 @@ class ServiceRunner:
             th.join(timeout=timeout_seconds)
             return not th.is_alive()
         return True
+
+    def graceful_stop(self, timeout_seconds: float = 60.0) -> tuple[bool, dict[str, list[Path]]]:
+        with self._lock:
+            svc = self._service
+            th = self._thread
+            loop = self._loop
+
+        if svc is None or loop is None:
+            return True, {}
+
+        async def _graceful() -> dict[str, list[Path]]:
+            return await svc.graceful_stop()
+
+        try:
+            fut = asyncio.run_coroutine_threadsafe(_graceful(), loop)
+            outputs = fut.result(timeout=timeout_seconds)
+        except Exception:
+            return False, {}
+
+        if th:
+            th.join(timeout=timeout_seconds)
+            return (not th.is_alive()), outputs
+        return True, outputs
 
     def checkpoint_and_stop(self, timeout_seconds: float = 45.0) -> bool:
         with self._lock:

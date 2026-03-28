@@ -526,9 +526,22 @@ class CaptureDashboard:
             messagebox.showwarning("Cancelled", "Stop cancelled (confirmation text did not match).")
             return
 
-        stopped = self.runner.stop(timeout_seconds=20)
+        stopped, outputs = self.runner.graceful_stop(timeout_seconds=70)
         if not stopped:
             messagebox.showwarning("Still stopping", "Service did not stop cleanly yet.")
+            return
+
+        lines = ["Capture stopped.", ""]
+        has_outputs = False
+        for stream_name, files in outputs.items():
+            if files:
+                has_outputs = True
+                lines.append(f"{stream_name}:")
+                for p in files:
+                    lines.append(f"  - {p}")
+        if not has_outputs:
+            lines.append("No final output files were created yet (not enough segments).")
+        messagebox.showinfo("Stop complete", "\n".join(lines))
 
     def stop_for_reboot(self) -> None:
         if not self.runner.status().running:

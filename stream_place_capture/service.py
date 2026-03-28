@@ -200,6 +200,24 @@ class CaptureService:
                 self.log.warning("checkpoint remux/archive failed: %s", exc)
         self.request_stop()
 
+    async def graceful_stop(self) -> dict[str, list[Path]]:
+        self.log.info("graceful stop requested")
+        outputs: dict[str, list[Path]] = {}
+        for stream_name, remuxer in list(self.remuxers_by_stream.items()):
+            stream_outputs: list[Path] = []
+            try:
+                final_path = remuxer.remux_progressive()
+                if final_path is not None:
+                    stream_outputs.append(final_path)
+                checkpoint = remuxer.archive_live_output()
+                if checkpoint is not None:
+                    stream_outputs.append(checkpoint)
+            except Exception as exc:
+                self.log.warning("graceful stop remux/archive failed stream=%s err=%s", stream_name, exc)
+            outputs[stream_name] = stream_outputs
+        self.request_stop()
+        return outputs
+
     def request_stop(self) -> None:
         self.stop_event.set()
 

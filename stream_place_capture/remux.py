@@ -16,16 +16,23 @@ class Remuxer:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.log = logging.getLogger(f"remuxer.{stream_name}")
 
+    def live_output_path(self) -> Path:
+        return self.output_dir / f"{self.stream_name}.live.mp4"
+
+    def _concat_entry(self, path: Path) -> str:
+        abs_path = path.resolve().as_posix().replace("'", "'\\''")
+        return f"file '{abs_path}'"
+
     def remux_progressive(self) -> Path | None:
         segment_files = sorted(self.segment_dir.glob("*.mp4"))
         if len(segment_files) < 2:
             return None
 
         list_file = self.output_dir / f"{self.stream_name}.concat.txt"
-        lines = [f"file '{path.as_posix()}'" for path in segment_files]
+        lines = [self._concat_entry(path) for path in segment_files]
         list_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
-        output_path = self.output_dir / f"{self.stream_name}.live.mp4"
+        output_path = self.live_output_path()
         temp_path = self.output_dir / f"{self.stream_name}.live.mp4.tmp"
 
         cmd = [
@@ -57,7 +64,7 @@ class Remuxer:
         return output_path
 
     def archive_live_output(self) -> Path | None:
-        source = self.output_dir / f"{self.stream_name}.live.mp4"
+        source = self.live_output_path()
         if not source.exists():
             return None
         stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime())
